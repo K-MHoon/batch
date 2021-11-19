@@ -1,0 +1,19 @@
+server:
+    port: 8083
+
+datasource:
+    url: jdbc:h2:mem:testdb
+
+spring:
+    jpa:
+#        database-platform: org.hibernate.dialect.MySQL8Dialect
+        hibernate:
+            ddl-auto: create
+        properties:
+            hibernate:
+                format_sql: true
+                show_sql: true
+
+logging:
+    level:
+        org.hibernate.type.descriptor.sql: trace
