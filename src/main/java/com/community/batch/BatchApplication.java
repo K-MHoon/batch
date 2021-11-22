@@ -16,26 +16,26 @@ public class BatchApplication {
 		SpringApplication.run(BatchApplication.class, args);
 	}
 
-	@Bean
-	public CommandLineRunner runner(UserRepository userRepository) throws Exception {
-		return (args) -> {
-			userRepository.save(User.builder()
-					.name("havi")
-					.password("test")
-					.email("havi@gmail.com")
-					.build());
-			userRepository.save(User.builder()
-					.name("havi2")
-					.password("test2")
-					.email("havi@gmail.com2")
-					.build());
-			userRepository.save(User.builder()
-					.name("havi3")
-					.password("test3")
-					.email("havi@gmail.com3")
-					.build());
-
-		};
-	}
+//	@Bean
+//	public CommandLineRunner runner(UserRepository userRepository) throws Exception {
+//		return (args) -> {
+//			userRepository.save(User.builder()
+//					.name("havi")
+//					.password("test")
+//					.email("havi@gmail.com")
+//					.build());
+//			userRepository.save(User.builder()
+//					.name("havi2")
+//					.password("test2")
+//					.email("havi@gmail.com2")
+//					.build());
+//			userRepository.save(User.builder()
+//					.name("havi3")
+//					.password("test3")
+//					.email("havi@gmail.com3")
+//					.build());
+//
+//		};
+//	}
 
 }

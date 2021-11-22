@@ -13,6 +13,7 @@ import java.util.Queue;
  * 큐를 사용해 저장하는 ItemReader 구현체
  * ItemReader의 기본 반환 타입은 단수형인데, 그에 따라 구현하면 User 객체 1개씩 DB에 select 쿼리를 요청하기 때문에,
  * 매우 비효율적인 방식이 될 수 있다.
+ * ==> ListItemReader로 구현되었기 때문에 미사용..
  * @param <T>
  */
 public class QueueItemReader<T> implements ItemReader<T> {
