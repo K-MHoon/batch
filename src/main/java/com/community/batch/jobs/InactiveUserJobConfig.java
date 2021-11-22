@@ -1,8 +1,10 @@
 package com.community.batch.jobs;
 
 import com.community.batch.domain.User;
+import com.community.batch.domain.enums.Grade;
 import com.community.batch.domain.enums.UserStatus;
 import com.community.batch.jobs.inactive.InactiveJobExecutionDecider;
+import com.community.batch.jobs.inactive.InactiveUserPartitioner;
 import com.community.batch.jobs.inactive.listener.InactiveIJobListener;
 import com.community.batch.jobs.inactive.listener.InactiveStepListener;
 import com.community.batch.jobs.readers.QueueItemReader;
@@ -12,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.JobScope;
 import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.FlowBuilder;
@@ -25,6 +28,8 @@ import org.springframework.batch.item.support.ListItemReader;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.util.ObjectUtils;
 
 import javax.persistence.EntityManagerFactory;
@@ -33,6 +38,7 @@ import java.time.ZoneId;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.stream.IntStream;
 
 @AllArgsConstructor
 @Configuration
@@ -43,22 +49,74 @@ public class InactiveUserJobConfig {
     private final EntityManagerFactory entityManagerFactory;
 
     /**
-     * 휴면회원 배치 Job 빈으로 등록
+     * 휴면회원 배치 Job 빈으로 등록 by MultiFlow
+     */
+//    @Bean
+//    public Job inactiveUserJob(JobBuilderFactory jobBuilderFactory,
+//                               InactiveIJobListener inactiveIJobListener,
+//                               Flow multiFlow) {
+//        return jobBuilderFactory.get("inactiveUserJob") // 'inactiveUserJob' 이라는 이름의 JobBuilder 생성
+//                .preventRestart() // Job 재실행 방지
+//                .listener(inactiveIJobListener)
+//                .start(multiFlow) // 파라미터에 주입받은 휴면회원 관련 Step inactiveJobStep을 제일 먼저 실행하도록 설정하는 부분
+//                .end()
+//                .build();
+//    }
+
+    /**
+     * 휴면회원 배치 Job 빈으로 등록 by Partition
      */
     @Bean
     public Job inactiveUserJob(JobBuilderFactory jobBuilderFactory,
                                InactiveIJobListener inactiveIJobListener,
-                               Flow inactiveJobFlow) {
+                               Step partitionerStep) {
         return jobBuilderFactory.get("inactiveUserJob") // 'inactiveUserJob' 이라는 이름의 JobBuilder 생성
                 .preventRestart() // Job 재실행 방지
                 .listener(inactiveIJobListener)
-                .start(inactiveJobFlow) // 파라미터에 주입받은 휴면회원 관련 Step inactiveJobStep을 제일 먼저 실행하도록 설정하는 부분
-                .end()
+                .start(partitionerStep) // 파라미터에 주입받은 휴면회원 관련 Step inactiveJobStep을 제일 먼저 실행하도록 설정하는 부분
                 .build();
     }
 
     @Bean
-    public Step inactiveJobStep(StepBuilderFactory stepBuilderFactory, ListItemReader<User> inactiveUserReader, InactiveStepListener inactiveStepListener) {
+    @JobScope // Job 실행 때마다 빈을 새로 생성하는 @JobScope 추가
+    public Step partitionerStep(StepBuilderFactory stepBuilderFactory, Step inactiveJobStep) {
+        return stepBuilderFactory
+                .get("partitionerStep")
+                .partitioner("partitionerStep", new InactiveUserPartitioner())
+                .gridSize(3) // 파라미터로 사용한 gridSize, 현재 Grade Enum이 3이므로 3 이상으로 설정 해야함.
+                .step(inactiveJobStep)
+                .taskExecutor(taskExecutor())
+                .build();
+    }
+
+    @Bean
+    public Flow multiFlow(Step inactiveJobStep) {
+        Flow[] flows = new Flow[5];
+
+        // IntStream을 이용해 배열의 크기 만큼 반복문을 돌린다.
+        // FlowBuilder 객체로 Flow를 5개 생성해서 flows 배열에 할당한다.
+        IntStream.range(0, flows.length).forEach(i ->
+                flows[i] = new FlowBuilder<Flow>("MultiFlow"+i)
+                        .from(inactiveJobFlow(inactiveJobStep))
+                        .end());
+        FlowBuilder<Flow> flowBuilder = new FlowBuilder<>("MultiFlowTest");
+        return flowBuilder
+                .split(taskExecutor()) // multiFlow에서 사용할 TaskExecutor를 등록한다.
+                .add(flows) // inactiveJobFlow 5개가 할당된 flows 배열을 추가한다.
+                .build();
+    }
+
+    /**
+     * 멀티 스레드 Step
+     * @return
+     */
+    @Bean
+    public TaskExecutor taskExecutor() {
+        return new SimpleAsyncTaskExecutor("Batch_Task"); // 뒤에 숫자가 1씩 증가하면서 이름이 정해짐
+    }
+
+    @Bean
+    public Step inactiveJobStep(StepBuilderFactory stepBuilderFactory, ListItemReader<User> inactiveUserReader, InactiveStepListener inactiveStepListener, TaskExecutor taskExecutor) {
         return stepBuilderFactory.get("inactiveUserStep")
                 .<User, User> chunk(CHUNK_SIZE) // chunk의 입력, 출력 타입을 User로 설정
                 // chunk 인잣값은 쓰기 시에 청크 단위로 묶어서 writer() 메서드를 실행시킬 단위를 지정한 것이다. 즉, 커밋의 단위가 10개 이다.
@@ -66,10 +124,12 @@ public class InactiveUserJobConfig {
                 .processor(inactiveUserProcessor()) // reader에서 조회된 User 들을 모두 비활성화 시킨다.
                 .writer(inactiveUserWriter())
                 .listener(inactiveStepListener)
+                .taskExecutor(taskExecutor)
+                .throttleLimit(2) // 설정된 제한 횟수만큼 스레드를 동시에 실행시키겠다는 의미. 시스템에 할당된 스레드 풀의 크기보다 작은 값으로 설정되어야 함
                 .build();
     }
 
-    @Bean
+//    @Bean
     public Flow inactiveJobFlow(Step inactiveJobStep) {
         FlowBuilder<Flow> flowBuilder = new FlowBuilder<>("inactiveJobFlow");
         return flowBuilder.start(new InactiveJobExecutionDecider())
@@ -107,12 +167,20 @@ public class InactiveUserJobConfig {
      * JobParameter 활용
      * @return
      */
+//    @Bean
+//    @StepScope
+//    public ListItemReader<User> inactiveUserReader(@Value("#{jobParameters[nowDate]}") Date nowDate, UserRepository userRepository) {
+//        if(ObjectUtils.isEmpty(nowDate)) nowDate = new Date();
+//        LocalDateTime now = LocalDateTime.ofInstant(nowDate.toInstant(), ZoneId.systemDefault());
+//        List<User> inactiveUsers = userRepository.findByUpdatedDateBeforeAndStatusEquals(now.minusYears(1), UserStatus.ACTIVE);
+//        return new ListItemReader<>(inactiveUsers);
+//    }
+
     @Bean
     @StepScope
-    public ListItemReader<User> inactiveUserReader(@Value("#{jobParameters[nowDate]}") Date nowDate, UserRepository userRepository) {
-        if(ObjectUtils.isEmpty(nowDate)) nowDate = new Date();
-        LocalDateTime now = LocalDateTime.ofInstant(nowDate.toInstant(), ZoneId.systemDefault());
-        List<User> inactiveUsers = userRepository.findByUpdatedDateBeforeAndStatusEquals(now.minusYears(1), UserStatus.ACTIVE);
+    public ListItemReader<User> inactiveUserReader(@Value("#{stepExecutionContext[grade]}") String grade, UserRepository userRepository) {
+        log.info(Thread.currentThread().getName());
+        List<User> inactiveUsers = userRepository.findByUpdatedDateBeforeAndStatusEqualsAndGradeEquals(LocalDateTime.now().minusYears(1), UserStatus.ACTIVE, Grade.valueOf(grade));
         return new ListItemReader<>(inactiveUsers);
     }
 
