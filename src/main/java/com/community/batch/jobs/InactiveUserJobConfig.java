@@ -2,6 +2,7 @@ package com.community.batch.jobs;
 
 import com.community.batch.domain.User;
 import com.community.batch.domain.enums.UserStatus;
+import com.community.batch.jobs.inactive.InactiveJobExecutionDecider;
 import com.community.batch.jobs.inactive.listener.InactiveIJobListener;
 import com.community.batch.jobs.inactive.listener.InactiveStepListener;
 import com.community.batch.jobs.readers.QueueItemReader;
@@ -13,6 +14,9 @@ import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
 import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
 import org.springframework.batch.core.configuration.annotation.StepScope;
+import org.springframework.batch.core.job.builder.FlowBuilder;
+import org.springframework.batch.core.job.flow.Flow;
+import org.springframework.batch.core.job.flow.FlowExecutionStatus;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.item.database.JpaItemWriter;
@@ -42,11 +46,14 @@ public class InactiveUserJobConfig {
      * 휴면회원 배치 Job 빈으로 등록
      */
     @Bean
-    public Job inactiveUserJob(JobBuilderFactory jobBuilderFactory, InactiveIJobListener inactiveIJobListener, Step inactiveJobStep) {
+    public Job inactiveUserJob(JobBuilderFactory jobBuilderFactory,
+                               InactiveIJobListener inactiveIJobListener,
+                               Flow inactiveJobFlow) {
         return jobBuilderFactory.get("inactiveUserJob") // 'inactiveUserJob' 이라는 이름의 JobBuilder 생성
                 .preventRestart() // Job 재실행 방지
                 .listener(inactiveIJobListener)
-                .start(inactiveJobStep) // 파라미터에 주입받은 휴면회원 관련 Step inactiveJobStep을 제일 먼저 실행하도록 설정하는 부분
+                .start(inactiveJobFlow) // 파라미터에 주입받은 휴면회원 관련 Step inactiveJobStep을 제일 먼저 실행하도록 설정하는 부분
+                .end()
                 .build();
     }
 
@@ -60,6 +67,14 @@ public class InactiveUserJobConfig {
                 .writer(inactiveUserWriter())
                 .listener(inactiveStepListener)
                 .build();
+    }
+
+    @Bean
+    public Flow inactiveJobFlow(Step inactiveJobStep) {
+        FlowBuilder<Flow> flowBuilder = new FlowBuilder<>("inactiveJobFlow");
+        return flowBuilder.start(new InactiveJobExecutionDecider())
+                .on(FlowExecutionStatus.FAILED.getName()).end()
+                .on(FlowExecutionStatus.COMPLETED.getName()).to(inactiveJobStep).end();
     }
 
 //    @Bean
