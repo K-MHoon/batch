@@ -2,6 +2,8 @@ package com.community.batch.jobs;
 
 import com.community.batch.domain.User;
 import com.community.batch.domain.enums.UserStatus;
+import com.community.batch.jobs.inactive.listener.InactiveIJobListener;
+import com.community.batch.jobs.inactive.listener.InactiveStepListener;
 import com.community.batch.jobs.readers.QueueItemReader;
 import com.community.batch.repository.UserRepository;
 import lombok.AllArgsConstructor;
@@ -40,21 +42,23 @@ public class InactiveUserJobConfig {
      * 휴면회원 배치 Job 빈으로 등록
      */
     @Bean
-    public Job inactiveUserJob(JobBuilderFactory jobBuilderFactory, Step inactiveJobStep) {
+    public Job inactiveUserJob(JobBuilderFactory jobBuilderFactory, InactiveIJobListener inactiveIJobListener, Step inactiveJobStep) {
         return jobBuilderFactory.get("inactiveUserJob") // 'inactiveUserJob' 이라는 이름의 JobBuilder 생성
                 .preventRestart() // Job 재실행 방지
+                .listener(inactiveIJobListener)
                 .start(inactiveJobStep) // 파라미터에 주입받은 휴면회원 관련 Step inactiveJobStep을 제일 먼저 실행하도록 설정하는 부분
                 .build();
     }
 
     @Bean
-    public Step inactiveJobStep(StepBuilderFactory stepBuilderFactory, ListItemReader<User> inactiveUserReader) {
+    public Step inactiveJobStep(StepBuilderFactory stepBuilderFactory, ListItemReader<User> inactiveUserReader, InactiveStepListener inactiveStepListener) {
         return stepBuilderFactory.get("inactiveUserStep")
-                .<User, User> chunk(10) // chunk의 입력, 출력 타입을 User로 설정
+                .<User, User> chunk(CHUNK_SIZE) // chunk의 입력, 출력 타입을 User로 설정
                 // chunk 인잣값은 쓰기 시에 청크 단위로 묶어서 writer() 메서드를 실행시킬 단위를 지정한 것이다. 즉, 커밋의 단위가 10개 이다.
                 .reader(inactiveUserReader)
                 .processor(inactiveUserProcessor()) // reader에서 조회된 User 들을 모두 비활성화 시킨다.
                 .writer(inactiveUserWriter())
+                .listener(inactiveStepListener)
                 .build();
     }
 
